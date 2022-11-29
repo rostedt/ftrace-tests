@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# fixed by "ring-buffer: Fix first commit on sub-buffer having non-zero delta"
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+DEBUGFS="$debugfs/tracing"
+trace_clock=$DEBUGFS/trace_clock
+if ! grep -q counter $trace_clock ; then
+	echo "counter clock is not defined in this kernel"
+	exit 0
+fi
+
+echo counter > $trace_clock || exit -1
+
+trace-cmd record -e sched_switch sleep 1 || exit -1
+trace-cmd report | awk '{ print $3 }' | perl -e '
+	my $last_t;
+	my $delta = 0;
+	while (<>) {
+		if (/(.*):/) {
+			my $t = $1;
+			if (defined($last_t) && $t != $last_t + 1) {
+				if ($t < $last_t + 1) {
+					print "FAILED $t <= $last_t\n";
+					exit (-1);
+				}
+				my $d = $t - ($last_t + 1);
+				if ($d > $delta) {
+					$delta = $d;
+				}
+				print "Skipped between $last_t and $t\n";
+			}
+			$last_t = $t;
+		}
+	}
+	if ($delta) {
+		print "greatest delta = $delta\n";
+	}' || (echo "FAILED" && exit -1) || exit -1
+echo "SUCCESS"
+exit 0

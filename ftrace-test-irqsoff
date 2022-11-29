@@ -1,0 +1,23 @@
+
+test_tracer() {
+	tracer=$1
+
+	if grep -q $tracer /sys/kernel/tracing/available_tracers; then
+		trace-cmd start -p $tracer
+		x=`wc -l /sys/kernel/tracing/trace | cut -d' ' -f1`
+		echo $x
+		if [ "$x" -lt 30 ]; then
+			exit 1
+		fi
+	else
+		echo "$tracer not enabled in this kernel"
+	fi
+}
+
+for tracer in irqsoff preemptoff preemptirqsoff ; do
+	test_tracer $tracer
+done
+
+trace-cmd start -p nop
+
+exit 0

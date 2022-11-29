@@ -1,0 +1,51 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+tracedir="$debugfs/tracing"
+
+arg="sleep 10"
+if [ $# -gt 0 ]; then
+	arg="$@"
+fi
+
+tmpfile=/tmp/tmpfile.$$
+
+for tracer in `cat $tracedir/available_tracers`; do
+	if [ $tracer == "nop" ]; then
+		continue;
+	fi
+	echo "Testing tracer $tracer"
+	echo $tracer > $tracedir/current_tracer
+	echo "running $arg"
+	$arg
+	echo 0 > $tracedir/tracing_on
+	cat $tracedir/trace > $tmpfile
+	echo nop > $tracedir/current_tracer
+	cnt=`wc -l $tmpfile | cut -d ' ' -f1`
+	if [ $cnt -gt 300 ]; then
+		head -100 $tmpfile
+		echo '[...]'
+		tail -100 $tmpfile
+	else
+		cat $tmpfile
+	fi
+	echo 1 > $tracedir/tracing_on
+done

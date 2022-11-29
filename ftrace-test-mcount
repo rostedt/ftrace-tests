@@ -1,0 +1,123 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+tracedir="$debugfs/tracing"
+
+mcount=0
+
+if grep -q 'mcount$' /proc/kallsyms; then
+	mcount=1
+	echo "Found mcount usage"
+elif grep -q '__fentry__$' /proc/kallsyms; then
+	echo "Found fentry usage"
+else
+	echo "ERROR: Neither mcount nor fentry is defined?"
+	exit 1
+fi
+
+cd $tracedir
+echo > trace
+
+echo nop > current_tracer
+echo 1 > tracing_on
+
+if grep -q function_graph available_tracers; then
+
+	echo -n 'Testing function graph tracer: '
+	echo function_graph > current_tracer || exit 1
+	if ! grep -q '() {' trace; then
+		echo 'ERROR - No functions traced'
+		echo nop > current_tracer
+		exit 1
+	fi
+	echo nop > current_tracer
+	echo 'PASS - Found function graph traces'
+fi
+
+echo > trace
+
+if [ -f set_ftrace_filter ]; then
+	echo -n 'Testing function stacktrace: '
+	echo 'schedule:stacktrace' > set_ftrace_filter || exit 1
+	sleep 1
+	echo '!schedule:stacktrace' > set_ftrace_filter || exit 1
+	if ! grep -q 'stack trace' trace ; then
+		echo 'ERROR - Can not find stack traces'
+		exit 1
+	fi
+	echo 'PASS - Found stack traces'
+fi
+
+echo > trace
+
+if [ -f kprobe_events ]; then
+	echo -n 'Testing kprobes: '
+	if [ -d events/kprobes ]; then
+		echo 0 > events/kprobes/enable
+	fi
+	echo > kprobe_events
+	if [ $mcount -eq 1 ]; then
+		offset=0
+		# find where mcount is
+		for i in `seq 20`; do
+			echo "p:hello schedule+$i a=%ax" > kprobe_events 2>/dev/null
+			if [ $? -eq 0 ]; then
+				echo 1 > events/kprobes/hello/enable
+				if grep -q schedule enabled_functions; then
+					offset=$i
+					break
+				fi
+				echo 0 > events/kprobes/hello/enable
+			fi
+		done
+	else
+		echo 'p:hello schedule a=%ax' > kprobe_events || exit 1
+	fi
+	echo 1 > events/kprobes/hello/enable || exit 1
+	sleep 1
+	if ! grep schedule enabled_functions ; then
+		echo 0 > events/kprobes/hello/enable
+		echo > kprobe_events
+		echo 'ERROR - kprobes not using function tracing?'
+		exit 1
+	fi
+	if echo stacktrace > events/kprobes/hello/trigger; then
+		echo "Testing stacktrace on kprobe"
+		sleep 1
+		if ! grep -q 'stack trace' trace; then
+			echo "ERROR - stack trace probe not working"
+			exit 1
+		fi
+		echo \!stacktrace > events/kprobes/hello/trigger
+	fi
+	echo 0 > events/kprobes/hello/enable
+	if ! grep -q hello trace ; then
+		echo 'ERROR - failed to find kprobe event'
+		echo > kprobe_events
+		exit 1
+	fi
+	echo 'PASSED - Found kprobe event'
+	echo > kprobe_events
+fi
+
+echo > trace
+
+echo 0

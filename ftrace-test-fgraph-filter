@@ -1,0 +1,123 @@
+#!/bin/bash
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+debug=`find_debugfs`
+
+#set -x
+
+cd $debug/tracing || exit 1
+
+if ! grep -q function_graph available_tracers; then
+    echo "no function graph tracer configured"
+    exit 0;
+fi
+
+if [ ! -f set_ftrace_filter ]; then
+    echo "set_ftrace_filter not found? Is dynamic ftrace not set?"
+    exit 0
+fi
+
+function do_reset() {
+    echo nop > current_tracer
+    echo 0 > /proc/sys/kernel/stack_tracer_enabled
+    echo 1 > tracing_on
+    echo > trace
+    echo > set_ftrace_filter
+}
+
+echo 0 > tracing_on
+echo > trace
+if ! echo "schedule" > set_ftrace_filter; then
+    # test for powerpc 64
+    if ! echo ".schedule" > set_ftrace_filter; then
+	echo "can not enable schedule filter"
+	exit -1
+    fi
+fi
+
+echo function_graph > current_tracer
+echo 1 > tracing_on
+sleep 1
+count=`cat trace | grep '()' | grep -v schedule | wc -l`
+if [ $count -ne 0 ]; then
+    echo "Graph filtering not working by itself?"
+    exit -1;
+fi
+
+count=`cat trace | grep 'schedule()' | wc -l`
+if [ $count -eq 0 ]; then
+    echo "No schedule traces found?"
+    exit -1
+fi
+
+echo "Graph filtering works by itself"
+
+if [ ! -f stack_trace ]; then
+    echo "Stack tracer not configured, can't continue test"
+    do_reset
+    exit 0;
+fi
+
+echo "Now testing with stack tracer"
+
+echo 1 > /proc/sys/kernel/stack_tracer_enabled
+
+echo 0 > tracing_on
+echo > trace
+echo 1 > tracing_on
+sleep 1
+
+count=`cat trace | grep '()' | grep -v schedule | wc -l`
+
+if [ $count -ne 0 ]; then
+    echo "Graph filtering not working with stack tracer?"
+    exit -1
+fi
+
+count=`cat trace | grep 'schedule()' | wc -l`
+if [ $count -eq 0 ]; then
+    echo "No schedule traces found?"
+    exit -1
+fi
+
+echo "Graph filtering works with stack tracer"
+
+echo "Now testing if filtering still works without stack tracer"
+
+echo 0 > /proc/sys/kernel/stack_tracer_enabled
+echo > trace
+sleep 1
+
+
+count=`cat trace | grep '()' | grep -v schedule | wc -l`
+
+if [ $count -ne 0 ]; then
+    echo "Graph filtering not working after stack tracer disabled?"
+    exit -1
+fi
+
+count=`cat trace | grep 'schedule()' | wc -l`
+if [ $count -eq 0 ]; then
+    echo "No schedule traces found?"
+    exit -1
+fi
+
+do_reset
+
+echo "SUCCESS!"
+exit 0

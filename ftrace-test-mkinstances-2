@@ -1,0 +1,64 @@
+#!/bin/bash
+
+tracefs=`cat /proc/mounts  |grep tracefs| head -1 | cut -d' ' -f2`
+
+if [ -z "$tracefs" ]; then
+	echo "tracefs not mounted"
+	exit 0
+fi
+
+if [ ! -d $tracefs/instances ]; then
+	echo "No instances directory"
+	exit 0
+fi
+
+cd $tracefs/instances
+
+instance_slam() {
+	while :; do
+		mkdir foo &> /dev/null
+		rmdir foo &> /dev/null
+	done
+}
+
+instance_read() {
+	while :; do
+		cat foo/trace &> /dev/null
+	done
+}
+
+instance_set() {
+	while :; do
+		echo 1 > foo/events/sched/sched_switch
+	done 2> /dev/null
+}
+
+instance_slam &
+x=`jobs -l`
+p1=`echo $x | cut -d' ' -f2`
+echo $p1
+
+instance_set &
+x=`jobs -l | tail -1`
+p2=`echo $x | cut -d' ' -f2`
+echo $p2
+
+sleep 10
+
+kill -1 $p1
+kill -1 $p2
+
+echo "Wait for processes to finish"
+wait $p1 $p2
+echo "all processes finished, wait for cleanup"
+sleep 2
+
+mkdir foo
+ls foo
+rmdir foo
+if [ -d foo ]; then
+	echo foo still exists
+	exit -1
+fi
+echo SUCCESS
+exit 0

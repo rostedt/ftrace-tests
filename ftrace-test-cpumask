@@ -1,0 +1,132 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+DEBUGFS="$debugfs/tracing"
+
+save_cpumask=`cat $DEBUGFS/tracing_cpumask`
+
+MAXCPUS=6
+
+cpus=`ls -d /sys/devices/system/cpu/cpu[0-9]* | wc -l`
+echo cpu=$cpus
+
+
+let MAXCNT=$cpus
+
+MSKCNT=$MAXCNT
+
+if [ $MAXCNT -gt $MAXCPUS ]; then
+    MSKCNT=$MAXCPUS
+fi
+
+let MSKCNT=2**$MSKCNT
+
+let cpus=$cpus-1
+
+get_bits() {
+    MSK=$1
+    ECHO=""
+    x=0
+    while [ $MSK -gt 0 ]; do
+	let bit=$MSK'&'1
+	if [ $bit -eq 1 ]; then
+	    ECHO="$ECHO $x"
+	fi
+	let x=$x+1
+	let MSK=$MSK'>>'1
+    done
+    echo $ECHO
+#    eval $CMD
+}
+
+run_cmd() {
+  instance=$1
+  dir=$2
+  mask=$3
+  shift
+  shift
+  shift
+  bits=$@
+
+  mask=`printf "%x" $mask`
+  echo "instance = $instance"
+  echo "mask = $mask"
+  echo "bits = $bits"
+
+  echo "trace-cmd start -b 1407 -p function $instance -M $mask -e all "
+  trace-cmd start -b 1407 -p function $instance -M $mask -e all || exit 1
+  # run task on all cpus
+  for i in `seq 0 $cpus`; do
+    taskset -c $i ls > /dev/null
+  done
+  sleep 1
+  for bit in `seq 0 $cpus`; do
+	cnt=`grep '^entries' "$dir/per_cpu/cpu$bit/stats" | cut -d' ' -f2`
+	if echo $bits | grep -q "\\<$bit\\>"; then
+		echo -n 1
+		if [ $cnt -eq 0 ]; then
+			echo
+			echo  Count $cnt found when expecting entries
+			echo "CPU $bit has no entries when it was enabled"
+			exit -1
+		fi
+	else
+		echo -n 0
+		if [ $cnt -ne 0 ]; then
+			echo
+			echo  Count $cnt found when expecting no entries
+			echo "CPU $bit has entries when it was disabled"
+			exit -1
+		fi
+	fi
+  done
+  echo
+  trace-cmd start $instance -p nop
+}
+
+let MSKCNT=$MSKCNT-1
+for i in `seq $MSKCNT`; do
+    echo "get_bits $i"
+    bits=`get_bits $i`
+    run_cmd "" $DEBUGFS $i $bits
+done
+
+trace-cmd start -p nop -M $save_cpumask
+
+if [ ! -d $DEBUGFS/instances ]; then
+	exit 0
+fi
+
+rmdir $DEBUGFS/instances/foo
+mkdir $DEBUGFS/instances/foo
+if [ ! -f $DEBUGFS/instances/foo/tracing_cpumask ]; then
+	echo "instances do not have cpumask"
+	rmdir $DEBUGFS/instances/foo
+	exit 0
+fi
+rmdir $DEBUGFS/instances/foo
+
+for i in `seq $MSKCNT`; do
+    bits=`get_bits $i`
+    run_cmd "-B foo" $DEBUGFS/instances/foo $i $bits
+done
+rmdir $DEBUGFS/instances/foo
+exit 0

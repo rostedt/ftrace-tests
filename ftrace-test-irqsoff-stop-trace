@@ -1,0 +1,45 @@
+cd /sys/kernel/tracing
+if ! grep -q irqsoff available_tracers; then
+	echo irqsoff not configured
+	exit 0
+fi
+
+if [ !  -f options/function-trace ]; then
+	echo Kernel does not have function-trace option.. exitting
+	exit 0
+fi
+
+echo 0 > tracing_max_latency
+trace-cmd start -d -p irqsoff
+sleep 1
+x=`grep -v '^#' trace | wc -l`
+
+# check if this is 64bit powerpc
+if grep -q '\.schedule' available_filter_functions; then
+   # yep it is
+   sched=".schedule"
+else
+   sched="schedule"
+fi
+
+echo $sched:traceoff > set_ftrace_filter
+sleep 1
+echo \!$sched:traceoff > set_ftrace_filter
+t=`cat tracing_on`
+if [ $t -ne 0 ]; then
+	echo tracing_on not disable
+	exit 1
+fi
+
+/work/c/hackbench 10
+
+y=`grep -v '^#' trace | wc -l`
+echo $x $y
+
+trace-cmd start -p nop
+
+if [ $y -lt 1 ]; then
+	echo "Tracer did not stop test"
+	exit 1
+fi
+

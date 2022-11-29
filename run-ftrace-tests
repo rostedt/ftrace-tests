@@ -1,0 +1,98 @@
+TRACE_DIR="/sys/kernel/tracing"
+
+DIR=`dirname $0`
+
+m=`uname -m`
+if [ "$m" == "x86_64" ]; then
+        bits=64
+else
+        bits=32
+fi
+echo $bits
+
+run() {
+	echo
+	echo "$1"
+	shift
+	test=$1
+	shift
+	$DIR/$test $*
+	if [ $? -ne 0 ]; then
+		echo FAILED TEST
+		echo "Failed to run $test"
+		exit 1
+	fi
+	echo PASSED TEST
+	sleep 1;
+}
+
+echo 1 > ${TRACE_DIR}/options/pause-on-trace
+
+run "TESTING MCOUNT" ftrace-test-mcount
+
+run "TESTING STRESS" ftrace-test-stress /work/c/hackbench_$bits 20
+
+run "TESTING FUNCTION GRAPH FILTERING" ftrace-test-fgraph-filter
+
+run "TESTING EVENT TRIGGER EVENT" ftrace-test-event-trigger-event
+
+run "TESTING EVENT TRACEON/OFF" ftrace-test-event-traceon-off
+
+run "TESTING STACKTRACE" ftrace-test-event-stacktrace
+
+run "TESTING COUNTER" ftrace-test-counter
+
+run "TESTING IRQSOFF" ftrace-test-irqsoff
+
+run "TESTING OPTIONS" ftrace-test-options
+
+run "TESTING INSTANCE TRACERS" 	ftrace-test-instance-tracers
+
+#run "TESTING STATS" ftrace-test-stats
+
+run "TESTING TRACEON/OFF" ftrace-test-traceon-off
+
+# This can trigger a warn_alloc() failure on i386
+if [ $bits -eq 64 ]; then
+run "TESTING FAIL-RB-ALLOC" ftrace-test-fail-rb-alloc
+fi
+
+run "TESTING EACH TRACER" ftrace-test-tracers sleep 1
+
+run "TESTING CLOCKS" ftrace-test-clocks
+
+run "TESTING CPUMASKS" ftrace-test-cpumask
+
+# run "TESTING PIPE CHECK" ftrace-test-pipe
+
+run "TESTING FGRAPH MAX DEPTH" ftrace-test-fgraph-depth
+
+run "TESTING MODULE LOAD" ftrace-test-module-load
+
+run "TESTING KPROBE TEST" ftrace-test-kprobes
+
+run "TESTING ADD/DEL INSTANCE" ftrace-test-mkinstances
+
+run "TESTING ADD/DEL INSTANCE 2" ftrace-test-mkinstances-2
+
+run "TESTING SNAPSHOT TEST" ftrace-test-snapshot
+
+run "TESTING TRACECMD PLUGINS" test-tracecmd-record-plugins
+
+run "TESTING LATENCY FUNCTION-OFF" ftrace-test-latency-function
+
+run "TESTING LATENCY OVERWRITE" ftrace-test-latency-overwrite
+
+run "TESTING TEST SYSTEM NAMES" ftrace-test-system-names
+
+run "TESTING TEST TRACEOFF FOR IRQSOFF" ftrace-test-irqsoff-stop-trace
+
+run "TESTING SAVED CMDLINES SIZE" ftrace-test-saved_cmdlines
+
+run "TESTING TRAMP COUNT" ftrace-test-tramp-count
+
+run "TESTING FUNC PROFILER" ftrace-test-func-profiler
+
+echo
+echo SUCCESS
+exit 0

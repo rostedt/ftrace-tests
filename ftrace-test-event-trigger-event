@@ -1,0 +1,207 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+TRACEDIR="$debugfs/tracing"
+EVENTDIR=$TRACEDIR/events
+EVENT=$EVENTDIR/sched/sched_wakeup
+EVENT_ENABLE=$EVENT/enable
+TRIGGER_FILE=$EVENT/trigger
+TRACE_FILE=$TRACEDIR/trace
+TRACING_ON=$TRACEDIR/tracing_on
+
+OTHER="sched:sched_switch"
+OTHER_EVENT=$EVENTDIR/sched/sched_switch
+OTHER_EVENT_ENABLE=$OTHER_EVENT/enable
+
+if [ ! -f $TRIGGER_FILE ]; then
+    echo "triggers are not set for this kernel"
+    exit 0
+fi
+
+function cnt_trace() {
+	    grep -v '^#' $TRACE_FILE | wc -l
+}
+
+function clear_triggers() {
+    grep -v '^#' $TRIGGER_FILE | while read t; do
+	tr=`echo $t | sed -e s'/:.*//'`
+	if [ $tr == "enable_event" -o $tr == "disable_event" ]; then
+	    tr=`echo $t | sed -e s'/\([^:]*:[^:]*:[^:]*\):.*/\1/'`
+	fi
+	echo "!$tr" > $TRIGGER_FILE
+    done
+}
+
+function check_events() {
+    events=$1
+    stack=$2
+    count=$3
+
+    if [ $events -eq 1 ]; then
+	if ! grep -q 'sched_switch:' $TRACE_FILE ; then
+	    echo "Expected event but it wasn't there"
+	    exit -1
+	fi
+    else
+	if grep -q 'sched_switch:' $TRACE_FILE ; then
+	    echo "Expected no events but events were found"
+	    exit -1
+	fi
+    fi
+
+    if [ $stack -eq 1 ]; then
+	if [ $count -eq 0 ]; then
+	    # unlimited, find the sleep call
+	    if ! grep -q '^ => .*sleep' $TRACE_FILE; then
+		echo "Could not find sleep call"
+		exit -1
+	    fi
+	else
+	    # count the stack traces
+	    cnt=`grep '<stack trace>' $TRACE_FILE | wc -l`;
+	    if [ $cnt -ne $count ]; then
+		echo "Expected $count hits but only see $cnt"
+		exit -1
+	    fi
+	fi
+    else
+	if grep -q '^ =>' $TRACE_FILE; then
+	    echo "Found stack trace when not enabled"
+	    exit -1
+	fi
+    fi
+}
+
+function test_other_enabled() {
+    val="$1"
+
+    e=`cat $OTHER_EVENT_ENABLE`
+    if [ "$e" != "$val" ]; then
+	echo "Expected $val but found $e"
+	exit -1
+    fi
+}
+
+function do_reset() {
+    clear_triggers
+    echo nop > $TRACEDIR/current_tracer || exit -1
+    echo 0 > $TRACEDIR/events/enable || exit -1
+    echo > $TRACE_FILE || exit -1
+    echo 1 > $TRACING_ON || exit -1
+}
+
+#set -x
+
+echo '** CLEAR TRACE'
+do_reset
+
+run_enable_disable() {
+    enable=$1			# enable
+    Enable=$2			# Enable
+    check_disable="$3"		# 0
+    check_enable_star="$4"	# 1*
+
+    # check stacktrace available
+    if ! grep -q ${enable}_event $TRIGGER_FILE; then
+	echo "$enable trigger not available"
+	exit 0
+    fi
+
+    cnt=`cnt_trace`
+    if [ $cnt -ne 0 ]; then
+	echo "Found junk in trace file, exiting"
+	exit -1
+    fi
+
+    echo "$Enable event all the time"
+
+    echo $check_disable > $OTHER_EVENT_ENABLE
+    sleep 1
+
+    test_other_enabled "$check_disable"
+
+    echo "${enable}_event:$OTHER" > $TRIGGER_FILE
+
+    echo " make sure it works 5 times"
+
+    for i in `seq 5`; do
+	sleep 1
+	echo "  test $i"
+	test_other_enabled "$check_enable_star"
+
+	echo $check_disable > $OTHER_EVENT_ENABLE
+    done
+    sleep 1
+    echo " make sure it's still works"
+    test_other_enabled "$check_enable_star"
+    do_reset
+}
+
+run_enable_disable enable Enable 0 "1*"
+run_enable_disable disable Disable 1 "0*"
+
+for i in 1 2 3; do
+    if [ $i -gt 1 ]; then
+	s='s'
+    else
+	s=''
+    fi
+    echo "Enable event only $i time$s"
+
+    echo 0 > $TRACING_ON
+    echo "enable_event:$OTHER:$i" > $TRIGGER_FILE
+    echo 1 > $EVENT_ENABLE
+
+    for x in `seq $i`; do
+	echo "  test $x"
+	sleep 1
+	test_other_enabled "1*"
+	echo 0 > $OTHER_EVENT_ENABLE
+    done
+
+    sleep 1
+    echo "Make sure it didn't do it for more"
+    test_other_enabled "0*"
+
+    do_reset
+done
+
+echo "Now testing filter"
+
+sleep 100&
+x=`jobs -l`
+pid=`echo $x | cut -d' ' -f2`
+
+echo "enable_event:$OTHER if pid==$pid" > $TRIGGER_FILE
+
+test_other_enabled "0*"
+sleep 1
+test_other_enabled "0*"
+sleep 1
+kill $pid
+sleep 1
+test_other_enabled "1*"
+
+do_reset
+
+echo '** SUCCESS'
+
+exit 0

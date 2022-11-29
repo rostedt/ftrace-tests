@@ -1,0 +1,161 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+TRACEDIR="$debugfs/tracing"
+EVENTDIR=$TRACEDIR/events
+
+function cnt_trace() {
+	    grep -v '^#' $TRACEDIR/trace | head -10000 | wc -l
+}
+
+#set -x
+
+echo '** DISABLE TRACING'
+echo 0 > $TRACEDIR/tracing_on || exit -1
+echo > $TRACEDIR/trace || exit -1
+
+cnt=`cnt_trace`
+if [ $cnt -ne 0 ]; then
+   exit -1
+fi
+
+
+echo '** ENABLE EVENTS'
+
+echo 1 > $EVENTDIR/enable || exit -1
+
+echo '** ENABLE TRACING'
+echo 1 > $TRACEDIR/tracing_on || exit -1
+
+cnt=`cnt_trace`
+if [ $cnt -eq 0 ]; then
+   exit -1
+fi
+
+# powerpc uses .schedule
+func="schedule"
+x=`trace-cmd list -f '^\.schedule$' | wc -l`
+if [ "$x" -eq 1 ]; then
+   func=".schedule"
+fi
+
+echo '** SET TRACEOFF'
+
+echo "$func:traceoff" > $TRACEDIR/set_ftrace_filter
+
+cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+if [ $cnt -ne 1 ]; then
+   exit -1
+fi
+
+cnt=`cnt_trace`
+sleep 1
+cnt2=`cnt_trace`
+
+if [ $cnt -ne $cnt2 ]; then
+   exit -1;
+fi
+
+on=`cat $TRACEDIR/tracing_on`
+if [ $on != "0" ]; then
+	exit -1
+fi
+
+line1=`cat $TRACEDIR/trace | tail -1`
+sleep 1
+line2=`cat $TRACEDIR/trace | tail -1`
+
+if [ "$line1" != "$line2" ]; then
+   exit -1
+fi
+
+echo > $TRACEDIR/trace || exit -1
+
+cnt=`cnt_trace`
+if [ $cnt -ne 0 ]; then
+   exit -1
+fi
+
+echo "!$func:traceoff" >> $TRACEDIR/set_ftrace_filter
+
+cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+if [ $cnt -ne 0 ]; then
+   exit -1
+fi
+
+on=`cat $TRACEDIR/tracing_on`
+if [ $on != "0" ]; then
+	exit -1
+fi
+
+echo "$func:traceon" > $TRACEDIR/set_ftrace_filter
+
+cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+if [ $cnt -ne 1 ]; then
+   exit -1
+fi
+
+cnt=`cnt_trace`
+if [ $cnt -eq 0 ]; then
+   exit -1
+fi
+
+on=`cat $TRACEDIR/tracing_on`
+if [ $on != "1" ]; then
+	exit -1
+fi
+
+
+echo "!$func:traceon" >> $TRACEDIR/set_ftrace_filter
+
+cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+if [ $cnt -ne 0 ]; then
+   exit -1
+fi
+
+check_sleep() {
+    val=$1
+    sleep 1
+    cat $TRACEDIR/set_ftrace_filter
+    on=`cat $TRACEDIR/tracing_on`
+    if [ $on != "$val" ]; then
+	exit -1
+    fi
+}
+
+
+echo "$func:traceoff:3" > $TRACEDIR/set_ftrace_filter
+check_sleep "0"
+echo 1 > $TRACEDIR/tracing_on
+check_sleep "0"
+echo 1 > $TRACEDIR/tracing_on
+check_sleep "0"
+echo 1 > $TRACEDIR/tracing_on
+check_sleep "1"
+echo "!$func:traceoff:0" > $TRACEDIR/set_ftrace_filter
+
+if grep -e traceon -e traceoff $TRACEDIR/set_ftrace_filter; then
+    exit -1
+fi
+
+echo 0 > $EVENTDIR/enable
+
+exit 0

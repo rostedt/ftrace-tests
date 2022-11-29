@@ -1,0 +1,19 @@
+cd /sys/kernel/tracing
+if [ ! -f kprobe_events ]; then
+	echo "no kprobes in this kernel"
+	exit 0
+fi
+
+echo p:i do_sys_open > kprobe_events  || exit 1
+echo p:j schedule >> kprobe_events  || exit 1
+cat kprobe_events  || exit 1
+if echo p:i do_sys_open >> kprobe_events ; then
+	echo should not accept same name
+	exit 1
+fi
+echo p:b do_sys_open "rax=%ax" >> kprobe_events || exit 1
+cat kprobe_events  || exit 1
+ls events/kprobes/i || exit 1
+ls events/kprobes/j || exit 1
+
+

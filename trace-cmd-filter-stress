@@ -1,0 +1,229 @@
+#!/bin/bash
+
+if [ -z "$TRACE_CMD" ]; then
+   TRACE_CMD=`which trace-cmd`
+fi
+if [ -z "$TRACE_CMD" ]; then
+   echo trace-cmd not found
+   exit -1
+fi
+if [ ! -x $TRACE_CMD ]; then
+   echo trace-cmd is not executable
+fi
+
+#set -x
+
+# ring buffer test may be running, disable trace_printks
+#$TRACE_CMD start -p nop -Onotrace_printk
+
+DATA=trace-$$.dat
+
+trace_cmd_record() {
+	echo $TRACE_CMD record -o $DATA "$@"
+	$TRACE_CMD record -o $DATA "$@" >/dev/null 2>/dev/null
+	if [ $? -ne 0 ]; then
+		echo failed running trace-cmd
+		exit -1
+	fi
+}
+
+trace_cmd_report() {
+	$TRACE_CMD report -i $DATA "$@" | grep -v -e rb_producer -e rb_consumer | sed -ne '0,/cpus/d' -e 'p'
+}
+
+get_pid() {
+	if [ -z "$*" ]; then
+		return 0
+	fi
+	echo "$*" | sed -e 's/^ *[^ ]*-\([0-9][0-9]*\).*/\1/'
+}
+
+######### TEST 1 ############
+test1() {
+	echo "Running Test 1"
+
+	trace_cmd_record -e sched_switch -e sched_wakeup -F sleep 1
+	out=`trace_cmd_report |grep -e sleep`
+	if [ -z "$out" ]; then
+	   echo "$out"
+	   echo FAILED no sleep
+	   #rm $DATA
+	   exit -1
+	fi
+	pid=`echo $out | sed -e 's/.*sleep-\([0-9]*\).*/\1/'`
+	out=`trace_cmd_report |grep -v $pid`
+	if [ ! -z "$out" ]; then
+	   echo "$out"
+	   echo FAILED more than sleep
+	   #rm $DATA
+	   exit -1;
+	fi
+	rm $DATA
+}
+
+######### TEST 2 ############
+test2() {
+	echo "Running Test 2"
+
+	trace_cmd_record -e kmem/kmalloc -f "(common_pid == $$) || (bytes_alloc > 32 && bytes_alloc < 1024)" sleep 5
+	trace_cmd_report | sed -ne '1,/cpus/d' -e 'p' | while read a; do
+		   pid=`printf "%s" "$a" | sed -e 's/^ *[^ ]*-\([0-9][0-9]*\).*/\1/'`
+		   if [ -z "$pid" ]; then
+			continue
+		   fi
+		   if [ "$pid" -eq $$ ]; then
+		   	continue
+		   fi
+		   bytes=`printf "%s" "$a" | sed -e 's/^.*bytes_alloc=\([0-9][0-9]*\).*/\1/'`
+		   if [ $bytes -le 32 -o $bytes -ge 1024 ]; then
+		      echo FAILED kmalloc bytes=$bytes $a
+		      exit -1
+		   fi
+	done
+	err=$?
+	if [ $err -ne 0 ]; then
+	   rm $DATA
+	   exit $err
+	fi
+}
+
+######### TEST 3 ############
+test3() {
+	echo "Running Test 3"
+
+	trace_cmd_record -e sched -f "(common_pid == $$) || ((common_pid > 10) && common_pid < 100) || (common_pid >= 1000 && common_pid <= 1050) || (common_pid > 10000 && common_pid < 20000)" sleep 5
+	trace_cmd_report  | sed -ne '1,/cpus/d' -e 'p' | while read a; do
+		pid=`printf "%s" "$a" | sed -e 's/^ *[^ ]*-\([0-9][0-9]*\).*/\1/'`
+		if [ $pid -eq $$ ]; then
+			continue
+		fi
+		if [ $pid -gt 10 -a $pid -lt 100 ]; then
+			continue
+		fi
+		if [ $pid -ge 1000 -a $pid -le 1050 ]; then
+			continue
+		fi
+		if [ $pid -gt 10000 -a $pid -lt 20000 ]; then
+			continue
+		fi
+		echo FAILED and ors $a
+		exit -1
+	done
+	err=$?
+	if [ $err -ne 0 ]; then
+	   rm $DATA
+	   exit $err
+	fi
+	rm $DATA
+}
+
+######### TEST 4 ############
+
+read_pids() {
+	max=$1
+	trace_cmd_report -F ".*:COMM != 'trace-cmd' && common_pid != $$" |
+	sed -ne 's/^ *[^ ]*-\([0-9][0-9]*\).*/\1/p' | sort -u | tail -$max
+	if [ $? -ne 0 ]; then
+		echo "failed"
+		exit 1
+	fi
+}
+
+get_tracing_dir() {
+	debug=`grep debugfs /proc/mounts | awk '{ print $2 }'`
+	echo -n "$debug/tracing"
+}
+
+ors() {
+	del=""
+	for pid in $*; do
+		echo -n "$del" "common_pid == $pid"
+		del=" ||"
+	done
+}
+
+nands() {
+	del=""
+	for pid in $*; do
+		echo -n "$del" "common_pid != $pid"
+		del=" &&"
+	done
+}
+
+altandor() {
+	del=""
+	op="=="
+	for pid in $*; do
+		echo -n "$del" "common_pid $op $pid"
+		if [ "$del" == " ||" ]; then
+			del=" &&"
+			op="!="
+		else
+			del=" ||"
+			op="!="
+		fi
+	done
+}
+
+echo_dir() {
+	filter=$1
+	dir=$2
+
+#	echo "testing: $filter into $dir"
+	echo "$filter" > $dir || exit -1
+}
+
+test4() {
+	echo "Running Test 4"
+
+	trace_cmd_record -e sched sleep 1
+	echo " read 10 pids"
+	pids=`read_pids 10`
+	if [ $? -ne 0 ]; then
+		echo "failed to read pids"
+		exit 1
+	fi
+	rm $DATA
+
+	echo "pids = '$pids'"
+	or_filter=`ors $pids`
+	and_filter=`nands $pids`
+	andor_filter=`altandor $pids`
+
+	$TRACE_CMD start -e sched
+	tdir=`get_tracing_dir`
+
+	dir=$tdir/events/sched/filter
+
+	echo "$or_filter"
+	echo "$and_filter"
+	echo "$andor_filter"
+	for n in `seq 1000`; do
+		echo_dir "$or_filter" $dir
+		echo_dir "$and_filter" $dir
+		echo_dir "$and_filter" $dir
+		echo_dir "$andor_filter" $dir
+	done
+
+	dir=$tdir/events/sched/sched_switch/filter
+
+	for n in `seq 1000`; do
+		echo_dir "$or_filter" $dir
+		echo_dir "$and_filter" $dir
+		echo_dir "$andor_filter" $dir
+	done
+
+	$TRACE_CMD reset
+
+}
+
+# clear trace
+$TRACE_CMD start -p nop
+
+test1
+test2
+test3
+test4
+
+echo PASSED
+exit 0

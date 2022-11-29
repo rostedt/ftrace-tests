@@ -1,0 +1,61 @@
+#!/bin/bash
+
+TRACECMD=trace-cmd
+
+TIME=2
+
+trace-cmd record --nosplice -e sched sleep 1 >/dev/null 2>&1
+nosplice=$?
+if [ $nosplice -ne 0 ]; then
+    echo " --nosplice not supported"
+fi
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $type == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+tracedir="$debugfs/tracing"
+
+# test plugins
+
+run_plugin_test() {
+    plugin=$1
+    extra=$2
+
+    echo "Running $plugin $extra"
+    if ! $TRACECMD record -p $plugin $extra sleep $TIME; then
+	echo "FAILED record -p $plugin $extra"
+	exit -1
+    fi
+    if ! $TRACECMD report > /tmp/test-trace.out ; then
+	echo "FAILED report for $plugin $extra"
+	exit -1
+    fi
+    head -500 /tmp/test-trace.out
+}
+
+plugins=`cat $tracedir/available_tracers`;
+for p in $plugins; do
+    run_plugin_test $p || exit 1
+    if [ $nosplice -eq 0 ]; then
+	run_plugin_test $p --nosplice || exit 1
+    fi
+done
+
+echo success
+exit 0

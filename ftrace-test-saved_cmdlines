@@ -1,0 +1,129 @@
+#!/bin/bash
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+debug=`find_debugfs`
+TRACE_DIR=$debug/tracing
+file_name=saved_cmdlines_size
+SIZE_FILE=$TRACE_DIR/$file_name
+HIGHEST_PID=32768
+let TOO_HIGH=$HIGHEST_PID+1
+TRACE_FILE=$TRACE_DIR/trace
+TRACING_ON=$TRACE_DIR/tracing_on
+EVENT_ENABLE=$TRACE_DIR/events/enable
+
+if [ ! -f $SIZE_FILE ]; then
+	echo "$file_name does not exist"
+	exit 0
+fi
+
+start_size=`cat $SIZE_FILE`
+
+test_bad_size() {
+	bad=$1
+
+	echo "Test: Writing invalid size $bad"
+	if echo $bad > $SIZE_FILE; then
+		echo "writing $bad to $file_name succeeded!"
+		exit 1
+	fi
+
+	size=`cat $SIZE_FILE`
+
+	if [ $size -ne $start_size ]; then
+		echo "writing $bad caused size to change"
+		echo "was $start_size is not $size"
+		exit 1
+	fi
+}
+
+
+# 0 should fail
+test_bad_size 0
+
+# -1 should fail too
+test_bad_size "-1"
+
+# write too much
+test_bad_size $TOO_HIGH
+
+do_trace() {
+	echo "turn tracing off"
+	echo 0 > $TRACING_ON || exit 1
+
+	echo "enable all events"
+	echo 1 > $EVENT_ENABLE || exit 1
+
+	echo "clear trace"
+	echo > $TRACE_FILE || exit 1
+
+	echo "enable tracing"
+	echo 1 > $TRACING_ON || exit 1
+
+	sleep 5
+
+	echo "disable events"
+	echo 0 > $EVENT_ENABLE || exit 1
+}
+
+test_size_file() {
+	test=$1
+
+	size=`cat $SIZE_FILE`
+	if [ $test -ne $size ]; then
+		echo "We set $file_name to $test, but it has $size"
+		exit 1
+	fi
+}
+
+echo "only one cmdline"
+echo 1 > $SIZE_FILE || exit 1
+
+test_size_file 1
+
+do_trace
+
+echo "should be lots of <...>"
+cnt=`grep '^ *<...>'  $TRACE_FILE | wc -l`
+
+echo "there were $cnt of them"
+if [ $cnt -lt 10 ]; then
+	echo "Hmm not many, this could be wrong"
+	exit 1
+fi
+
+echo "now lets do max pids"
+echo $HIGHEST_PID > $SIZE_FILE || exit 1
+
+test_size_file $HIGHEST_PID
+
+do_trace
+
+echo "there shouldn't be any <...>"
+cnt=`grep '^ *<...>'  $TRACE_FILE | wc -l`
+
+echo "there were $cnt of them"
+if [ $cnt -gt 0 ]; then
+	echo "Hmm, there were some?"
+	exit 1
+fi
+
+echo "reset size back to original"
+echo $start_size > $SIZE_FILE || exit 1
+
+echo "SUCCESS!"
+

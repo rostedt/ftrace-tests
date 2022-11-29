@@ -1,0 +1,114 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debug=`find_debugfs`
+cd $debug/tracing/
+
+if [ -f tracing_enabled ]; then
+    enable="tracing_enabled"
+else
+    enable="tracing_on"
+fi
+
+echo nop > current_tracer
+
+save_size=`cat buffer_size_kb`
+x=`echo $save_size | cut -d' ' -f2`
+if [ "$x" == "(expanded:" ]; then
+    save_size=`echo $save_size | cut -d' ' -f3 | cut -d')' -f1`
+fi
+echo 10 > buffer_size_kb
+
+echo 0 > $enable
+
+#clear trace
+echo > trace
+
+echo 1 > events/sched/sched_switch/enable
+
+echo "start pipe"
+file="/tmp/blah"
+cat trace_pipe > $file &
+sleep 1
+x=`jobs -l`
+p=`echo $x | cut -d' ' -f2`
+y=`echo $x | cut -d' ' -f3`
+if [ "$y" != "Running" ]; then
+    echo $x
+    echo "Not running"
+    kill -9 $p
+    exit -1
+fi
+
+echo "Enable"
+echo 1 > $enable
+
+# always enable tracing_on as it may be disabled by tracing_enable
+echo 1 > tracing_on
+
+sleep 1
+ls /bin > /dev/null
+
+x=`jobs`
+y=`echo $x | cut -d' ' -f2`
+if [ "$y" != "Running" ]; then
+    echo $x
+    echo "Not running"
+    echo $save_size > buffer_size_kb
+    kill -9 $p
+    exit -1
+fi
+
+echo FINISHED > trace_marker
+echo "Disable"
+echo 0 > $enable
+
+echo "stop events"
+echo 0 > events/sched/sched_switch/enable
+
+sleep 1
+
+echo -n "Flush "
+while :; do
+    a=`tail -l $file`
+    sleep 1
+    b=`tail -l $file`
+
+    if [ "$a" == "$b" ]; then
+	break
+    fi
+    echo -n '.'
+done
+echo
+
+x=`jobs`
+y=`echo $x | cut -d' ' -f2`
+if [ "$y" != "Done" ]; then
+    echo $x
+    echo "Not finished"
+    echo $save_size > buffer_size_kb
+    kill -9 $p
+    exit -1
+fi
+
+echo 1 > tracing_on
+echo $save_size > buffer_size_kb
+exit 0
+

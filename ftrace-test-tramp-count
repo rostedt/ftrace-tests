@@ -1,0 +1,159 @@
+#!/bin/bash
+#
+# There was a bug where the tramp count could get out of whack if
+# you enable a ops with a trampoline (in this case function_graph)
+# on two functions, and then added two new ops to one of its functions
+# to make it not use the trampoline. When removing those two ops it
+# caused the nr_trampolines to go boom.
+#
+# This test triggers that bug on those kernels.
+#
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+debug=`find_debugfs`
+
+cd $debug/tracing || exit 1
+
+# We need function_graph, instances that do function tracing and stack trace
+# to run this test
+if ! grep -q function_graph available_tracers; then
+    echo "no function graph tracer configured"
+    exit 0;
+fi
+
+if [ ! -f set_ftrace_filter ]; then
+    echo "set_ftrace_filter not found? Is dynamic ftrace not set?"
+    exit 0
+fi
+
+if [ ! -f stack_trace_filter ]; then
+    echo "stack_trace not found, stack tracing enabled?"
+    exit 0
+fi
+
+if [ ! -d instances ]; then
+    echo "no instances directory found, does this kernel have instances?"
+    exit 0
+fi
+
+FOOBAR=instances/foobar
+mkdir $FOOBAR || exit -1
+
+if [ ! -f $FOOBAR/available_tracers ]; then
+    rmdir $FOOBAR
+    echo "no available_tracers file in instance, can't do function trace"
+    exit 0
+fi
+
+if ! grep -q function $FOOBAR/available_tracers; then
+    rmdir $FOOBAR
+    echo "instances do not support function tracing, can't run test"
+    exit 0
+fi
+
+if [ ! -f $FOOBAR/set_ftrace_filter ]; then
+    echo "Can't find set_ftrace_filter file in instance directory"
+    exit 0
+fi
+
+# OK, looks like we can run this test!
+
+# find the schedule function and SyS_prctl functions
+
+prctl=`grep -i 'sys_prctl$' available_filter_functions | head -1`
+if [ -z "$prctl" ]; then
+    echo "Can't find SyS_prctl?"
+    exit 1
+fi
+
+sched=`grep -i 'schedule$' available_filter_functions | head -1`
+if [ -z "$sched" ]; then
+    echo "Can't find schedule?"
+    exit 1
+fi
+
+echo "found $prctl and $sched"
+
+echo $prctl $sched > set_ftrace_filter || exit 1
+
+echo $prctl > $FOOBAR/set_ftrace_filter || exit 1
+
+echo $prctl > stack_trace_filter
+
+cleanup() {
+    echo nop > current_tracer
+    echo 0 > events/enable
+    echo  > set_ftrace_filter
+    echo > $FOOBAR/set_ftrace_filter
+    echo > stack_trace_filter
+    echo 0 > /proc/sys/kernel/stack_tracer_enabled
+
+    rmdir $FOOBAR
+}
+
+echo function_graph > current_tracer || exit 1
+
+echo Tramps set
+cat enabled_functions
+
+
+echo function > $FOOBAR/current_tracer || exit 1
+echo 1 > /proc/sys/kernel/stack_tracer_enabled
+
+echo
+echo All enabled
+cat enabled_functions
+
+fail() {
+    echo FAILED
+    cleanup
+    exit 1
+}
+
+
+echo 0 > /proc/sys/kernel/stack_tracer_enabled
+if [ $? -ne 0 ]; then
+    fail
+fi
+
+echo
+echo disabled stack tracer
+cat enabled_functions
+
+echo nop > $FOOBAR/current_tracer
+if [ $? -ne 0 ]; then
+    fail
+fi
+
+echo
+echo disabled function tracer
+cat enabled_functions
+echo nop > current_tracer
+if [ $? -ne 0 ]; then
+    fail
+fi
+
+cat set_ftrace_filter > /dev/null
+if [ $? -ne 0 ]; then
+    fail
+fi
+
+cleanup
+
+echo SUCCESS
+exit 0

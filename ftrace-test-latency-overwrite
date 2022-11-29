@@ -1,0 +1,54 @@
+overwrite=/sys/kernel/tracing/options/overwrite
+if [ ! -f $overwrite ]; then
+	echo "overwrite option not defined"
+	exit 0
+fi
+
+trace-cmd start -p nop
+
+test_overwrite() {
+	test=$1
+	val=`cat $overwrite`
+	if [ $val -ne $test ]; then
+		echo "Overwrite is $val but expected $test"
+		exit -1
+	fi
+}
+
+echo 0 > $overwrite
+test_overwrite 0
+
+echo "TESTING overwrite 0 -> 1"
+for tracer in irqsoff preemptoff preemptirqsoff wakeup wakeup_rt; do
+
+	trace-cmd start -p function
+	test_overwrite 0
+
+	if trace-cmd start -p $tracer ; then
+		echo "  TESTING $tracer"
+		test_overwrite 1
+	fi
+done
+echo "WORKED"
+
+trace-cmd start -p function
+test_overwrite 0
+
+echo 1 > $overwrite
+test_overwrite 1
+
+echo "TESTING overwrite 1 -> 1"
+for tracer in irqsoff preemptoff preemptirqsoff wakeup wakeup_rt; do
+
+	trace-cmd start -p function
+	test_overwrite 1
+
+	if trace-cmd start -p $tracer ; then
+		echo "  TESTING $tracer"
+		test_overwrite 1
+	fi
+done
+echo "WORKED"
+
+trace-cmd start -p nop
+test_overwrite 1

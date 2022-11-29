@@ -1,0 +1,179 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+tracedir="$debugfs/tracing"
+tmpfile="/tmp/tmp.$$"
+
+if [ ! -d $tracedir/instances ]; then
+    echo "instances not configured in this kernel"
+    exit 0
+fi
+
+cd $tracedir/instances || exit -1
+
+# clear out instances
+ls | while read t; do
+    rmdir $t
+done
+
+if ! mkdir foo ; then
+    echo "Failed to create instance foo"
+    exit -1
+fi
+
+available_tracers=`cat foo/available_tracers`
+
+first_wakeup=""
+wakeups=""
+
+first_irqoff=""
+irqoffs=""
+
+first_noise=""
+noise=""
+
+test_tracers=""
+
+for tracer in $available_tracers; do
+
+    if [ $tracer == "nop" ]; then
+	continue;
+    fi
+
+    test=`echo $tracer | sed -s 's/wakeup//'`
+    if [ "$test" != $tracer ]; then
+	if [ -z "$first_wakeup" ]; then
+	    first_wakeup=$tracer
+	    wakeups=$tracer
+	else
+	    wakeups="$wakeups $tracer"
+	fi
+	continue
+    fi
+
+    test=`echo $tracer | sed -s 's/off//'`
+    if [ "$test" != $tracer ]; then
+	if [ -z "$first_irqoff" ]; then
+	    first_irqoff=$tracer
+	    irqoffs=$tracer
+	else
+	    irqoffs="$irqoffs $tracer"
+	fi
+	continue
+    fi
+
+    test=`echo $tracer | sed -s 's/\(osnoise\|hwlat\|timerlat\)//'`
+    if [ "$test" != $tracer ]; then
+	if [ -z "$first_noise" ]; then
+	    first_noise=$tracer
+	    noise=$tracer
+	    continue
+	fi
+	if [ "$noise" == "hwlat" ]; then
+	    noise=$tracer
+	    continue
+	fi
+	if [ "$tracer" == "osnoise" ]; then
+	    noise=$tracer
+	    continue
+	fi
+	continue
+    fi
+
+    test_tracers="$test_tracers $tracer"
+done
+
+test_tracers="$test_tracers $first_wakeup $first_irqoff $noise"
+
+echo "Creating directories for $test_tracers"
+
+for tracer in $test_tracers; do
+    if ! mkdir $tracer; then
+	echo "Failed to create instance $tracer"
+	exit -1
+    fi
+done
+
+for tracer in $test_tracers; do
+    if ! echo $tracer > $tracer/current_tracer; then
+	echo "Failed to start tracer $tracer"
+	exit -1
+    fi
+
+    curr=`cat $tracer/current_tracer`
+    if [ "$curr" != "$tracer" ]; then
+	echo "Current tracer '$curr' does not equal '$tracer'"
+	exit -1
+    fi
+
+    cnt=`grep "^#.*$tracer" $tracer/trace | wc -l`
+    if [ $cnt -lt 1 ]; then
+	echo "Tracer $tracer not in trace file ($cnt)"
+	exit -1
+    fi
+done
+
+sleep 1
+
+for tracer in $test_tracers; do
+    cat $tracer/trace > $tmpfile
+    echo nop > $tracer/current_tracer
+    cnt=`wc -l $tmpfile | cut -d ' ' -f1`
+    if [ $cnt -gt 300 ]; then
+	head -100 $tmpfile
+	echo '[...]'
+	tail -100 $tmpfile
+    else
+	cat $tmpfile
+    fi
+    rm -f $tmpfile
+done
+
+for tracer in $test_tracers; do
+    if ! rmdir $tracer ; then
+	echo "Failed to remove $tracer"
+	exit -1
+    fi
+done
+
+rmdir foo
+
+echo "SUCCESS!"
+exit 0
+
+
+
+arg="sleep 10"
+if [ $# -gt 0 ]; then
+	arg="$@"
+fi
+
+for tracer in `cat $tracedir/available_tracers`; do
+	if [ $tracer == "nop" ]; then
+		continue;
+	fi
+	echo "Testing tracer $tracer"
+	echo $tracer > $tracedir/current_tracer
+	echo "running $arg"
+	$arg
+	cat $tracedir/trace
+	echo nop > $tracedir/current_tracer
+done

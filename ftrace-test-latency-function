@@ -1,0 +1,112 @@
+
+dir=/sys/kernel/tracing
+
+function=$dir/options/function-trace
+max=$dir/tracing_max_latency
+current=$dir/current_tracer
+trace=$dir/trace
+traceon=$dir/tracing_on
+available=$dir/available_tracers
+
+
+if [ ! -f $function ]; then
+	echo "$function does not exist"
+	exit 0
+fi
+
+if [ ! -f $max ]; then
+	echo "$max does not exist"
+	exit 0
+fi
+
+echo 1 > $traceon
+
+test_function() {
+	test=$1
+
+	echo 0 > $traceon
+	# Search for <- and count to determine how many functions
+	# have been traced. Functions still get traced if function
+	# tracing was disabled, but that's done manually by the tracer
+	# and no more than 3.
+	cnt=`grep '<-' $trace | wc -l`
+	if [ $cnt -gt 3 ]; then
+		active=1
+	else
+		active=0
+	fi
+
+	if [ $active -ne $test ]; then
+		cat $trace
+		echo "Active is $active, tested is $test count is $cnt"
+		echo 1 > $traceon
+		exit -1
+	fi
+	echo 1 > $traceon
+}
+
+run_test() {
+	test=$1
+
+	# make sure wakeups have something to trace
+	chrt -f 10 ls -lR /usr/bin >/dev/null
+	chrt -f 10 sleep .2
+	test_function $test
+}
+
+do_test() {
+	tracer=$1
+	enable=$2
+
+	if ! grep -s $tracer $available; then
+		echo "SKIPPING $tracer as it is not found"
+		return
+	fi
+	echo "TESTING tracer $tracer for $enable"
+
+	for i in 1 2; do
+		echo $enable > $function
+		echo nop > $current
+		echo 0 > $max
+		echo $tracer > $current
+
+		run_test $enable
+	done
+
+	return
+
+	# loop twice
+	for i in 1 2; do
+		echo 0 > $function
+		echo 0 > $max
+
+		run_test 0
+
+		echo 1 > $function
+		echo 0 > $max
+
+		run_test 1
+	done
+}
+
+# When CONFIG_RT_GROUP_SCHED is set, we need to up the runtime
+old_rt=`cat /proc/sys/kernel/sched_rt_runtime_us`
+echo -1 > /proc/sys/kernel/sched_rt_runtime_us
+
+ACTIVE_TEST_TRACERS="wakeup wakeup_rt"
+INACTIVE_TEST_TRACERS="irqsoff preemptoff preemptirqsoff wakeup wakeup_rt"
+
+for tracer in $ACTIVE_TEST_TRACERS; do
+	do_test $tracer 1
+done
+
+for tracer in $INACTIVE_TEST_TRACERS; do
+	do_test $tracer 0
+done
+
+echo nop > $current
+
+echo $old_rt > /proc/sys/kernel/sched_rt_runtime_us
+
+echo SUCCESS
+exit 0

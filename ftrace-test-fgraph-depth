@@ -1,0 +1,147 @@
+#!/bin/bash
+
+cd /sys/kernel/tracing
+
+if [ ! -f max_graph_depth ]; then
+	# only test if graph depth exists
+	echo "max_graph_depth does not exist"
+	exit 0
+fi
+
+test_trace() {
+	depth=$1
+	cat per_cpu/cpu0/trace | perl -e '
+	my $test=@ARGV[0];
+	print "depth=$test\n";
+	my $sp=0;
+	my $depth=0;
+	my $start=0;
+	my $max=0;
+	while (<STDIN>) {
+		next if (/^#/);
+		if (/\|(\s+)\S+ \{/) {
+			$cnt = length $1;
+			if (!$sp || $cnt < $sp) {
+				$start = 1;
+				$depth = 0;
+				$sp = $cnt;
+				next;
+			}
+			if ($cnt > $sp) {
+				if ($start) {
+					$depth++;
+					if ($depth > $max) {
+						$max = $depth;
+					}
+				}
+			}
+			$start = 1;
+			$sp = $cnt;
+		} elsif (/\|(\s+)\S+;/) {
+			$cnt = length $1;
+			if ($cnt > $sp) {
+				if ($start) {
+					$sp = $cnt;
+					$depth++;
+					if ($depth > $max) {
+						$max = $depth;
+					}
+				}
+			} else {
+				$sp = 0;
+				$depth = 0;
+			}
+			$start = 0;
+		} elsif (/\|(\s+)\}/) {
+			$cnt = length $1;
+			if ($cnt == $sp) {
+				$depth--;
+				$start = 1;
+			} else {
+				$start = 0;
+				$sp = 0;
+				$depth = 0;
+			}
+		}
+	}
+	if (!$max && !$sp) {
+		print "No events found\n";
+		exit(1);
+	}
+	if (!$test && $max < 5) {
+		print "max depth only hit $max\n";
+		exit(1);
+	}
+	if ($test && $max != $test-1) {
+		print "max is $max and we only expected $test\n";
+		exit(1);
+	}
+	print "max depth reached $max.\nSuccess!\n";
+	exit(0);' $depth || exit 1
+}
+
+echo 1 > tracing_on
+echo 1 > max_graph_depth
+
+#if [ ! -d instances/foo ]; then
+#	mkdir instances/foo
+#fi
+#echo function > instances/foo/current_tracer
+taskset -p -c 0 $$
+echo > trace
+echo function_graph > current_tracer
+taskset -c 0 ls -ltr /usr/bin > /dev/null
+sleep 1;
+echo 0 > tracing_on
+#echo 0 > instances/foo/tracing_on
+
+echo "Testing depth of 1"
+cat per_cpu/cpu0/trace | perl -e '
+my $sp=0;
+while (<>) {
+	next if (/^#/);
+	# ignore returns, as a task could be scheduled from previous test
+	next if (/\|\s*\}/);
+	if (/\|(\s+)\S/) {
+		$cnt = length $1;
+		if ($sp) {
+			if ($sp != $cnt) {
+				print "Count changed from $sp to $cnt\n";
+				system("cat per_cpu/cpu0/trace");
+				exit(1);
+			}
+		} else {
+			$sp = $cnt;
+		}
+	}
+}
+if (!$sp) {
+	print "No events found\n";
+	exit(1);
+}
+exit(0);' || exit 1
+
+test_depth() {
+	depth=$1
+
+	echo $depth > max_graph_depth
+	echo > trace
+	echo 1 > tracing_on
+	taskset -c 0 ls /usr/bin > /dev/null
+	echo 0 > tracing_on
+
+	test_trace $depth
+}
+
+echo Success
+#exit 1
+echo "Testing zero depth"
+test_depth 0
+
+echo "Testing depth 2"
+test_depth 2
+
+echo "Testing depth 3"
+test_depth 3
+
+exit 0

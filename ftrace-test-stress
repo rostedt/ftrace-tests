@@ -1,0 +1,12 @@
+echo 0 > /proc/sys/kernel/ftrace_dump_on_oops
+
+here=`dirname $0`
+tmpfile=.tmp.stress.file
+perf record -o perf-test.dat -a -- trace-cmd record -e all -p function "$@" || exit -1
+trace-cmd report > $tmpfile || exit -1
+head -100 $tmpfile
+echo '[...]'
+tail -100 $tmpfile
+rm -f $tmpfile
+$here/test-mod-event || exit -1
+exit 0

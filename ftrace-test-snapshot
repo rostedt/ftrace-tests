@@ -1,0 +1,107 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+debug=`find_debugfs`/tracing
+
+cd $debug || exit 1
+
+if [ ! -f snapshot ]; then
+	echo "No snapshot, not running test"
+	exit 0
+fi
+
+set -x
+
+if [ -f tracing_enabled ]; then
+	echo 1 > tracing_enabled
+fi
+
+cat_snapshot() {
+	# comms can disappear, ignore them
+	cat snapshot | sed -e 's/ *[^ ]*-//'
+}
+
+echo 1 > tracing_on
+
+echo 1 > events/sched/sched_switch/enable || exit 1
+sleep 1
+echo 1 > snapshot || exit 1
+
+f1=/tmp/.test1
+f2=/tmp/.test2
+
+cat_snapshot > $f1 || exit 1
+sleep 1
+cat_snapshot > $f2 || exit 1
+
+cnt=`grep sched_switch $f1 | wc -l`
+
+if ! cmp $f1 $f2; then
+	echo "snapshot changed?"
+	exit 1
+fi
+
+if [ $cnt -lt 10 ]; then
+	echo "snapshot only contains $cnt lines?"
+	exit 1
+fi
+
+echo 1 > snapshot || exit 1
+
+cat_snapshot > $f2
+cnt=`grep sched_switch $f2 | wc -l`
+
+if cmp $f1 $f2; then
+	echo "snapshot didn't change?"
+	exit 1
+fi
+
+if [ $cnt -lt 10 ]; then
+	echo "snapshot only contains $cnt lines?"
+	exit 1
+fi
+
+echo 2 > snapshot || exit 1
+
+cnt=`grep sched_switch snapshot | wc -l`
+if [ $cnt -gt 0 ]; then
+	echo "snapshot not empty"
+	exit 1
+fi
+
+echo 1 > snapshot || exit 1
+
+cnt=`grep sched_switch snapshot | wc -l`
+
+if [ $cnt -lt 10 ]; then
+	echo "snapshot only contains $cnt lines?"
+	exit 1
+fi
+
+echo 0 > snapshot || exit 1
+cnt=`grep sched_switch snapshot | wc -l`
+if [ $cnt -gt 0 ]; then
+	echo "snapshot not empty"
+	exit 1
+fi
+
+echo 0 > events/enable
+
+rm $f1 $f2
+exit 0

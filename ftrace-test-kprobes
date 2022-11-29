@@ -1,0 +1,158 @@
+#!/bin/bash
+
+cd /sys/kernel/tracing
+
+if [ ! -f kprobe_events ]; then
+	echo "kprobe_events not defined"
+	exit 0
+fi
+
+set -x
+#cnt=`grep fentry /proc/kallsyms | wc -l`
+#fentry=0
+#if [ $cnt -gt 0 ]; then
+#   fentry=1
+#fi
+
+# powerpc uses .schedule
+func="schedule"
+x=`trace-cmd list -f '^\.schedule$' | wc -l`
+if [ "$x" -eq 1 ]; then
+   func=".schedule"
+fi
+
+func2="do_timer"
+x=`trace-cmd list -f '^\.do_timer$' | wc -l`
+if [ "$x" -eq 1 ]; then
+   func=".do_timer"
+fi
+
+addr=`grep " $func\$" /proc/kallsyms | cut -d ' ' -f1`
+addr2=`grep " $func2\$" /proc/kallsyms | cut -d ' ' -f1`
+
+fentry=0
+
+# check if fentry is enabled (kprobes will use function tracing)
+read_func_count() {
+	count=`grep "^$func " enabled_functions |  cut -d '(' -f2 | cut -d ')' -f1`
+	if [ -z "$count" ]; then
+		echo -n 0;
+	else
+		echo -n $count
+	fi
+}
+
+echo 0 > events/enable
+if [ -f enabled_functions ]; then
+	start_count=`read_func_count`;
+	echo "p:foo 0x$addr a=@jiffies_64" > kprobe_events || exit 1
+	end_count=`read_func_count`;
+	echo "start_count: $start_count  end_count: $end_count"
+	if [ $start_count -ne $end_count ]; then
+		fentry=1
+	fi
+	echo > kprobe_events;
+fi
+if [ $fentry -eq 1 ]; then
+	echo "fentry detected, kprobes using function tracer"
+else
+	echo "fentry not detected, kprobes using breakpoint"
+fi
+
+run_kprobe() {
+	test=$1
+	f=$2
+	a=$3
+
+	echo "enable kprobe on $f"
+	echo "p:$test 0x$a a=@jiffies_64"
+	echo "p:$test 0x$a a=@jiffies_64" >> kprobe_events || exit 1
+
+	if [ ! -d events/kprobes/test ]; then
+	   echo "no events/kprobes/test"
+	   exit 1
+	fi
+
+	trace-cmd start -e kprobes:$test || exit 1
+	if [ $fentry -eq 1 ]; then
+		echo "checking functions"
+		x=`grep $f enabled_functions | wc -l`
+		if [ $x -lt 1 ]; then
+			echo "Can't find $f in enabled functions"
+			exit 1
+		fi
+	fi
+	sleep 1
+	trace-cmd stop
+	cat trace | if ! grep -q "$f" ; then
+	    echo "Can't find $f in trace"
+	    exit 1
+	fi
+}
+
+> kprobe_events
+
+run_kprobe test $func $addr
+run_kprobe test2 $func2 $addr2
+
+if [ `uname -m` == "x86_64" -a $fentry -eq 1 ]; then
+	addr2=`perl -e "printf \"%x\",0x$addr + 5;"`
+	fentry=0
+	run_kprobe test3 $func $addr2
+fi
+
+trace-cmd start -p nop
+echo "reset kprobes"
+echo > kprobe_events || exit 1
+exit 0
+
+
+echo "enable kprobe on $func"
+echo "p:test 0x$addr a=@jiffies_64"
+echo "p:test 0x$addr a=@jiffies_64" > kprobe_events || exit 1
+
+if [ ! -d events/kprobes/test ]; then
+   echo "no events/kprobes/test"
+   exit 1
+fi
+
+trace-cmd start -e kprobes:test || exit 1
+if [ $fentry -eq 1 ]; then
+	echo "checking functions"
+	x=`grep $func enabled_functions | wc -l`
+	if [ $x -lt 1 ]; then
+		echo "Can't find $func in enabled functions"
+		exit 1
+	fi
+fi
+sleep 1
+trace-cmd stop
+cat trace | if ! grep -q "$func" ; then
+    echo "Can't find $func in trace"
+    exit 1
+fi
+
+echo "enable kprobe on $func2"
+echo "p:test2 0x$addr2 a=@jiffies_64"
+echo "p:test2 0x$addr2 a=@jiffies_64" >> kprobe_events || exit 1
+
+trace-cmd start -e kprobes:test2 || exit 1
+if [ $fentry -eq 1 ]; then
+	echo "checking functions"
+	x=`grep $func2 enabled_functions | wc -l`
+	if [ $x -lt 1 ]; then
+		echo "Can't find $func2 in enabled functions"
+		exit 1
+	fi
+fi
+sleep 1
+trace-cmd stop
+cat trace | if ! grep -q "$func2" ; then
+    echo "Can't find $func2 in trace"
+    exit 1
+fi
+
+trace-cmd start -p nop
+echo "reset kprobes"
+echo > kprobe_events || exit 1
+exit 0

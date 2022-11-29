@@ -1,0 +1,28 @@
+#!/bin/bash
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+debug=`find_debugfs`
+x=`trace-cmd record -p function -l '*account_user_time' --func-stack cat $debug/tracing/options/func_stack_trace  | head -1`
+# disable function stack trace option (trace-cmd should have done it itself)
+trace-cmd start -p function -l '*account_user_time'
+trace-cmd start -p nop
+echo > $debug/tracing/set_ftrace_filter
+if [ "$x" -eq 1 ]; then
+	exit 0
+fi
+exit 1

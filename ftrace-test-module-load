@@ -1,0 +1,127 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+if [ ! -f /proc/modules ]; then
+	echo CONFIG_MODULES not enabled
+	exit 0
+fi
+
+set -x
+debug=`find_debugfs`
+
+tracing=$debug/tracing
+version=`uname -r`
+modules=`find /lib/modules/$version -name '*.ko' | sed -e 's,^.*/\([^/]*\)\.ko,\1,' -e 's/-/_/g'`
+loaded=`lsmod | cut -d' ' -f1`
+for mod in $modules; do
+	# skip ring buffer benchmark as that can cause problems with the test
+	if [ $mod == "ring_buffer_benchmark" ]; then
+		continue;
+	fi
+	if ! echo $loaded | grep -q $mod; then
+		if ! modprobe $mod ; then
+			continue;
+		fi
+		# make sure there's functions to trace.
+		func=`grep "\\[$mod\\]" $tracing/available_filter_functions | head -1 | cut -d' ' -f1`
+		rmmod $mod
+		if [ -z "$func" ]; then
+			continue
+		fi
+		break
+	fi
+done
+echo "Using module: $mod  Function: $func"
+module=$mod
+# module=uinput
+#func=uinput_release
+modprobe $module
+rmmod $module
+
+set_ftrace_filter=$tracing/set_ftrace_filter
+set_ftrace_notrace=$tracing/set_ftrace_notrace
+
+> $set_ftrace_filter
+> $set_ftrace_notrace
+
+echo function > $tracing/current_tracer || exit 1
+
+echo "Testing function enabled"
+found=0
+locs=''
+modprobe $module
+while :; do
+    loc=`grep "^$module " /proc/modules | cut -d' ' -f6`
+    if echo $locs | grep -q $loc ; then
+	echo nop > $tracing/current_tracer || exit 1
+	> $set_ftrace_filter || exit 1
+	break
+    fi
+    locs="$locs $loc"
+    echo $func >> $set_ftrace_filter || exit 1
+    rmmod $module
+    modprobe $module
+done
+rmmod $module
+echo "  Success"
+
+locs=''
+echo "Testing function disabled"
+modprobe $module
+while :; do
+    loc=`grep "^$module " /proc/modules | cut -d' ' -f6`
+    if echo $locs | grep -q $loc ; then
+	echo nop  > $tracing/current_tracer || exit 1
+	> $set_ftrace_filter || exit 1
+	break
+    fi
+    locs="$locs $loc"
+    echo nop  > $tracing/current_tracer || exit 1
+    echo $func >> $set_ftrace_filter || exit 1
+    rmmod $module
+    echo function > $tracing/current_tracer
+    modprobe $module
+done
+rmmod $module
+echo "  Success"
+echo nop  > $tracing/current_tracer || exit 1
+
+locs=''
+echo "Testing notrace set"
+modprobe $module
+while :; do
+    loc=`grep "^$module " /proc/modules | cut -d' ' -f6`
+    if echo $locs | grep -q $loc ; then
+#echo "  done"
+#	exit 0
+	echo nop  > $tracing/current_tracer || exit 1
+	> $set_ftrace_filter || exit 1
+	break
+    fi
+    locs="$locs $loc"
+    echo nop  > $tracing/current_tracer || exit 1
+    echo $func >> $set_ftrace_notrace || exit 1
+    rmmod $module
+    echo function > $tracing/current_tracer
+    modprobe $module
+done
+rmmod $module
+echo "  Success"
+echo nop  > $tracing/current_tracer || exit 1
+exit 0

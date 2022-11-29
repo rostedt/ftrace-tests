@@ -1,0 +1,139 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+TRACEDIR="$debugfs/tracing"
+EVENTDIR=$TRACEDIR/events
+
+if [ ! -f $EVENTDIR/sched/sched_switch/trigger ]; then
+    echo "triggers are not set for this kernel"
+    exit 0
+fi
+
+function cnt_trace() {
+	    grep -v '^#' $TRACEDIR/trace | head -10000|  wc -l
+}
+
+function check_traceon() {
+    val=$1
+    cur=`cat $TRACEDIR/tracing_on`
+    if [ $val -ne $cur ]; then
+	echo "traceon expected to be $val but was $cur"
+	exit 1
+    fi
+}
+
+set -x
+
+echo '** DISABLE TRACING'
+echo 0 > $TRACEDIR/tracing_on || exit -1
+echo > $TRACEDIR/trace || exit -1
+
+check_traceon 0
+
+cnt=`cnt_trace`
+if [ $cnt -ne 0 ]; then
+   exit -1
+fi
+
+
+echo '** ENABLE FUNCTION TRACING'
+
+echo function > $TRACEDIR/current_tracer || exit -1
+
+echo '** ENABLE TRACING'
+echo 1 > $TRACEDIR/tracing_on || exit -1
+
+cnt=`cnt_trace`
+if [ $cnt -eq 0 ]; then
+   exit -1
+fi
+
+echo '** SET EVENT TRACEOFF'
+
+check_traceon 1
+
+echo "traceoff" > $EVENTDIR/sched/sched_switch/trigger
+sleep 1
+check_traceon 0
+cnt=`cnt_trace`
+sleep 1
+cnt2=`cnt_trace`
+
+if [ $cnt -ne $cnt2 ]; then
+   exit -1;
+fi
+
+line1=`cat $TRACEDIR/trace | tail -1`
+sleep 1
+line2=`cat $TRACEDIR/trace | tail -1`
+
+if [ $line1 != $line2 ]; then
+   exit -1
+fi
+
+echo > $TRACEDIR/trace || exit -1
+
+check_traceon 0
+
+echo "!traceoff" >> $EVENTDIR/sched/sched_switch/trigger
+
+check_traceon 0
+
+echo "traceon" >> $EVENTDIR/sched/sched_switch/trigger
+
+sleep 1
+
+cnt=`cnt_trace`
+if [ $cnt -eq 0 ]; then
+   exit -1
+fi
+
+check_traceon 1
+
+
+echo "!traceon" >> $EVENTDIR/sched/sched_switch/trigger
+
+check_sleep() {
+    val=$1
+    sleep 1
+    check_traceon $val
+}
+
+echo '** TEST COUNT traceoff (3)'
+
+echo "traceoff:3" >> $EVENTDIR/sched/sched_switch/trigger
+check_sleep "0"
+echo '** TEST COUNT traceoff (2)'
+echo 1 > $TRACEDIR/tracing_on
+check_sleep "0"
+echo '** TEST COUNT traceoff (1)'
+echo 1 > $TRACEDIR/tracing_on
+check_sleep "0"
+echo '** TEST COUNT traceoff (0)'
+echo 1 > $TRACEDIR/tracing_on
+check_sleep "1"
+echo "!traceoff:0" >> $EVENTDIR/sched/sched_switch/trigger
+
+echo nop > $TRACEDIR/current_tracer
+
+echo '** SUCCESS'
+
+exit 0

@@ -1,0 +1,7 @@
+current=`cut -d'[' -f2 /sys/kernel/tracing/trace_clock | cut -d']' -f1`
+for clock in `cat /sys/kernel/tracing/trace_clock | sed -e 's/[][]//g'`; do
+	echo "  TESTING $clock"
+	echo $clock > /sys/kernel/tracing/trace_clock
+	./ftrace-test-tracers sleep 1 || exit 1
+done
+exit 0

@@ -1,0 +1,29 @@
+#!/bin/bash
+
+find_debugfs() {
+    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $mount == "debugfs" ]; then
+	    echo $dir;
+	    break
+	fi
+    done`
+    if [ -z "$debugfs" ]; then
+	if ! mount -t debugfs nodev /sys/kernel/debug; then
+	    echo "FAILED to mount debugfs"
+	    exit -1
+	fi
+	echo "/sys/kernel/debug"
+    else
+	echo $debugfs
+    fi
+}
+
+debugfs=`find_debugfs`
+tracedir="$debugfs/tracing"
+
+echo 99999999 > $tracedir/buffer_size_kb&
+sleep 10
+if dmesg | grep "unable to handle kernel NULL"; then
+	exit 1
+fi
+exit 0
