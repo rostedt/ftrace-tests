@@ -1,5 +1,8 @@
 #!/bin/bash
 
+DIR=`dirname $0`
+$DIR/functions
+
 TRACECMD=trace-cmd
 
 TIME=2
@@ -9,27 +12,6 @@ nosplice=$?
 if [ $nosplice -ne 0 ]; then
     echo " --nosplice not supported"
 fi
-
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $type == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
-
-debugfs=`find_debugfs`
-tracedir="$debugfs/tracing"
 
 # test plugins
 
@@ -49,7 +31,7 @@ run_plugin_test() {
     head -500 /tmp/test-trace.out
 }
 
-plugins=`cat $tracedir/available_tracers`;
+plugins=`cat $TRACING_DIR/available_tracers`;
 for p in $plugins; do
     run_plugin_test $p || exit 1
     if [ $nosplice -eq 0 ]; then

@@ -1,18 +1,14 @@
 #!/bin/bash
 
-tracefs=`cat /proc/mounts  |grep tracefs| head -1 | cut -d' ' -f2`
+DIR=`dirname $0`
+. $DIR/functions
 
-if [ -z "$tracefs" ]; then
-	echo "tracefs not mounted"
-	exit 0
-fi
-
-if [ ! -d $tracefs/instances ]; then
+if [ ! -d $TRACING_DIR/instances ]; then
 	echo "No instances directory"
 	exit 0
 fi
 
-cd $tracefs/instances
+cd $TRACING_DIR/instances
 
 instance_slam() {
 	while :; do

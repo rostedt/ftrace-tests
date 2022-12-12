@@ -1,31 +1,14 @@
 #!/bin/bash
 
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
+DIR=`dirname $0`
+. $DIR/functions
 
-debugfs=`find_debugfs`
-TRACEDIR="$debugfs/tracing"
-EVENTDIR=$TRACEDIR/events
+EVENTDIR=$TRACING_DIR/events
 EVENT=$EVENTDIR/sched/sched_wakeup
 EVENT_ENABLE=$EVENT/enable
 TRIGGER_FILE=$EVENT/trigger
-TRACE_FILE=$TRACEDIR/trace
-TRACING_ON=$TRACEDIR/tracing_on
+TRACE_FILE=$TRACING_DIR/trace
+TRACING_ON=$TRACING_DIR/tracing_on
 
 OTHER="sched:sched_switch"
 OTHER_EVENT=$EVENTDIR/sched/sched_switch
@@ -102,8 +85,8 @@ function test_other_enabled() {
 
 function do_reset() {
     clear_triggers
-    echo nop > $TRACEDIR/current_tracer || exit -1
-    echo 0 > $TRACEDIR/events/enable || exit -1
+    echo nop > $TRACING_DIR/current_tracer || exit -1
+    echo 0 > $TRACING_DIR/events/enable || exit -1
     echo > $TRACE_FILE || exit -1
     echo 1 > $TRACING_ON || exit -1
 }

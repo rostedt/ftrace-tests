@@ -1,25 +1,9 @@
 #!/bin/bash
 
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
-debug=`find_debugfs`/tracing
+DIR=`dirname $0`
+. $DIR/functions
 
-cd $debug || exit 1
+cd $TRACING_DIR || exit 1
 
 if [ ! -f snapshot ]; then
 	echo "No snapshot, not running test"

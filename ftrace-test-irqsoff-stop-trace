@@ -1,4 +1,7 @@
-cd /sys/kernel/tracing
+DIR=`dirname $0`
+. $DIR/functions
+
+cd $TRACING_DIR
 if ! grep -q irqsoff available_tracers; then
 	echo irqsoff not configured
 	exit 0

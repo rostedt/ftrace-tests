@@ -1,32 +1,14 @@
 #!/bin/bash
 
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
-
-debugfs=`find_debugfs`
-DEBUGFS="$debugfs/tracing"
+DIR=`dirname $0`
+. $DIR/functions
 
 #set -x
 
 trace-cmd start -b 1407 -p function || exit 1
 let x=0
 while [ $x -lt 1000 ]; do
-	c=`grep '^overrun' $DEBUGFS/per_cpu/cpu0/stats | cut -d' ' -f2`
+	c=`grep '^overrun' $TRACING_DIR/per_cpu/cpu0/stats | cut -d' ' -f2`
 	if [ $c -gt 0 ]; then
 		break
 	fi
@@ -39,7 +21,7 @@ fi
 
 trace-cmd stop
 
-c=`grep '^entries' $DEBUGFS/per_cpu/cpu0/stats | cut -d' ' -f2`
+c=`grep '^entries' $TRACING_DIR/per_cpu/cpu0/stats | cut -d' ' -f2`
 if [ $c -eq 0 ]; then
 	echo "FAILED: No entries found"
 	exit 1
@@ -47,15 +29,15 @@ fi
 
 echo set buffer to 1000kb
 
-echo 1000 > $DEBUGFS/buffer_size_kb || exit 1
+echo 1000 > $TRACING_DIR/buffer_size_kb || exit 1
 
 echo spawn cat trace_pipe
-cat $DEBUGFS/trace_pipe > /dev/null &
+cat $TRACING_DIR/trace_pipe > /dev/null &
 
 echo read trace
 let x=0
 while [ $x -lt 60 ]; do
-	c=`grep -v '#' $DEBUGFS/trace |wc -l`
+	c=`grep -v '#' $TRACING_DIR/trace |wc -l`
 	if [ $c -eq 0 ]; then
 		break
 	fi
@@ -64,7 +46,7 @@ done
 
 echo disable tracing
 
-echo 0 > $DEBUGFS/tracing_on
+echo 0 > $TRACING_DIR/tracing_on
 
 echo wait for trace to become empty
 
@@ -73,7 +55,7 @@ last_c=2
 
 while [ $c -gt 0 ]; do
 	sleep 1
-	c=`grep -v '#' $DEBUGFS/trace | wc -l`
+	c=`grep -v '#' $TRACING_DIR/trace | wc -l`
 	if [ $c -eq $last_c ]; then
 		echo "trace_pipe stopped updating c=$c last_c=$last_c"
 		exit
@@ -89,11 +71,11 @@ if [ $x -eq 1000 ]; then
 	exit 1
 fi
 
-c=`grep '^entries' $DEBUGFS/per_cpu/cpu0/stats | cut -d' ' -f2`
+c=`grep '^entries' $TRACING_DIR/per_cpu/cpu0/stats | cut -d' ' -f2`
 if [ $c -ne 0 ]; then
 	echo "FAILED: entries should be zero"
 	exit 1
 fi
 
-echo 1 > $DEBUGFS/tracing_on
+echo 1 > $TRACING_DIR/tracing_on
 echo 0

@@ -1,12 +1,13 @@
 
-dir=/sys/kernel/tracing
+DIR=`dirname $0`
+. $DIR/functions
 
-function=$dir/options/function-trace
-max=$dir/tracing_max_latency
-current=$dir/current_tracer
-trace=$dir/trace
-traceon=$dir/tracing_on
-available=$dir/available_tracers
+function=$TRACING_DIR/options/function-trace
+max=$TRACING_DIR/tracing_max_latency
+current=$TRACING_DIR/current_tracer
+trace=$TRACING_DIR/trace
+traceon=$TRACING_DIR/tracing_on
+available=$TRACING_DIR/available_tracers
 
 
 if [ ! -f $function ]; then

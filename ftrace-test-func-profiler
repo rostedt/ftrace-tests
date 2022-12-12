@@ -10,26 +10,10 @@
 #
 # This test triggers those bugs on those kernels.
 #
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
-debug=`find_debugfs`
+DIR=`dirname $0`
+. $DIR/functions
 
-cd $debug/tracing || exit 1
+cd $TRACING_DIR || exit 1
 
 # We need function_graph and profiling to to run this test
 if ! grep -q function_graph available_tracers; then

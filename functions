@@ -1,0 +1,20 @@
+
+tracefs=`cat /proc/mounts  |grep tracefs| head -1 | cut -d' ' -f2`
+
+if [ -z "$tracefs" ]; then
+	if mount -t tracefs tracefs /sys/kernel/tracing; then
+		tracefs=/sys/kernel/tracing
+	elif mount -t debugfs tracefs /sys/kernel/debug; then
+		tracefs=/sys/kernel/debug/tracing
+	else
+		echo "Failed to find or mount tracefs"
+		exit 1
+	fi
+fi
+
+if [ ! -d $tracefs ]; then
+	echo "$tracefs is not a directory"
+	exit 1
+fi
+
+export TRACING_DIR=$tracefs

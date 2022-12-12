@@ -1,6 +1,9 @@
 #!/bin/bash
 
-cd /sys/kernel/tracing
+DIR=`dirname $0`
+. $DIR/functions
+
+cd $TRACING_DIR
 
 if [ ! -f max_graph_depth ]; then
 	# only test if graph depth exists

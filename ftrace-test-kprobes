@@ -1,6 +1,9 @@
 #!/bin/bash
 
-cd /sys/kernel/tracing
+DIR=`dirname $0`
+. $DIR/functions
+
+cd $TRACING_DIR
 
 if [ ! -f kprobe_events ]; then
 	echo "kprobe_events not defined"

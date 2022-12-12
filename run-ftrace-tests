@@ -1,6 +1,5 @@
-TRACE_DIR="/sys/kernel/tracing"
-
 DIR=`dirname $0`
+. $DIR/functions
 
 m=`uname -m`
 if [ "$m" == "x86_64" ]; then
@@ -26,7 +25,7 @@ run() {
 	sleep 1;
 }
 
-echo 1 > ${TRACE_DIR}/options/pause-on-trace
+echo 1 > ${TRACING_DIR}/options/pause-on-trace
 
 run "TESTING MCOUNT" ftrace-test-mcount
 

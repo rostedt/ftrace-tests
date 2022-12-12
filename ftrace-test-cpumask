@@ -1,27 +1,9 @@
 #!/bin/bash
 
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
+DIR=`dirname $0`
+. $DIR/functions
 
-debugfs=`find_debugfs`
-DEBUGFS="$debugfs/tracing"
-
-save_cpumask=`cat $DEBUGFS/tracing_cpumask`
+save_cpumask=`cat $TRACING_DIR/tracing_cpumask`
 
 MAXCPUS=6
 
@@ -106,27 +88,27 @@ let MSKCNT=$MSKCNT-1
 for i in `seq $MSKCNT`; do
     echo "get_bits $i"
     bits=`get_bits $i`
-    run_cmd "" $DEBUGFS $i $bits
+    run_cmd "" $TRACING_DIR $i $bits
 done
 
 trace-cmd start -p nop -M $save_cpumask
 
-if [ ! -d $DEBUGFS/instances ]; then
+if [ ! -d $TRACING_DIR/instances ]; then
 	exit 0
 fi
 
-rmdir $DEBUGFS/instances/foo
-mkdir $DEBUGFS/instances/foo
-if [ ! -f $DEBUGFS/instances/foo/tracing_cpumask ]; then
+rmdir $TRACING_DIR/instances/foo
+mkdir $TRACING_DIR/instances/foo
+if [ ! -f $TRACING_DIR/instances/foo/tracing_cpumask ]; then
 	echo "instances do not have cpumask"
-	rmdir $DEBUGFS/instances/foo
+	rmdir $TRACING_DIR/instances/foo
 	exit 0
 fi
-rmdir $DEBUGFS/instances/foo
+rmdir $TRACING_DIR/instances/foo
 
 for i in `seq $MSKCNT`; do
     bits=`get_bits $i`
-    run_cmd "-B foo" $DEBUGFS/instances/foo $i $bits
+    run_cmd "-B foo" $TRACING_DIR/instances/foo $i $bits
 done
-rmdir $DEBUGFS/instances/foo
+rmdir $TRACING_DIR/instances/foo
 exit 0

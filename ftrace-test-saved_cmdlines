@@ -1,30 +1,15 @@
 #!/bin/bash
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
-debug=`find_debugfs`
-TRACE_DIR=$debug/tracing
+
+DIR=`dirname $0`
+. $DIR/functions
+
 file_name=saved_cmdlines_size
-SIZE_FILE=$TRACE_DIR/$file_name
+SIZE_FILE=$TRACING_DIR/$file_name
 HIGHEST_PID=32768
 let TOO_HIGH=$HIGHEST_PID+1
-TRACE_FILE=$TRACE_DIR/trace
-TRACING_ON=$TRACE_DIR/tracing_on
-EVENT_ENABLE=$TRACE_DIR/events/enable
+TRACE_FILE=$TRACING_DIR/trace
+TRACING_ON=$TRACING_DIR/tracing_on
+EVENT_ENABLE=$TRACING_DIR/events/enable
 
 if [ ! -f $SIZE_FILE ]; then
 	echo "$file_name does not exist"

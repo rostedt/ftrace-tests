@@ -1,10 +1,13 @@
 
+DIR=`dirname $0`
+. $DIR/functions
+
 test_tracer() {
 	tracer=$1
 
-	if grep -q $tracer /sys/kernel/tracing/available_tracers; then
+	if grep -q $tracer $TRACING_DIR/available_tracers; then
 		trace-cmd start -p $tracer
-		x=`wc -l /sys/kernel/tracing/trace | cut -d' ' -f1`
+		x=`wc -l $TRACING_DIR/trace | cut -d' ' -f1`
 		echo $x
 		if [ "$x" -lt 30 ]; then
 			exit 1

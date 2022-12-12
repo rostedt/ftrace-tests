@@ -1,4 +1,7 @@
-overwrite=/sys/kernel/tracing/options/overwrite
+DIR=`dirname $0`
+. $DIR/functions
+
+overwrite=$TRACING_DIR/options/overwrite
 if [ ! -f $overwrite ]; then
 	echo "overwrite option not defined"
 	exit 0

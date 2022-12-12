@@ -1,4 +1,7 @@
-cd /sys/kernel/tracing
+DIR=`dirname $0`
+. $DIR/functions
+
+cd $TRACING_DIR
 if [ ! -f kprobe_events ]; then
 	echo "no kprobes in this kernel"
 	exit 0

@@ -1,9 +1,12 @@
+DIR=`dirname $0`
+$DIR/functions
+
 echo "insmod"
 insmod /lib/modules/`uname -r`/kernel/samples/trace_events/trace-events-sample.ko
 rm -f /tmp/fifo
 mkfifo /tmp/fifo
 echo "open filter"
-cat /tmp/fifo | /work/c/read-wait /sys/kernel/tracing/events/sample/filter &
+cat /tmp/fifo | /work/c/read-wait $TRACING_DIR/events/sample/filter &
 sleep 1
 echo "rmmod"
 rmmod trace-events-sample.ko

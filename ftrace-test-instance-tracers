@@ -1,33 +1,15 @@
 #!/bin/bash
 
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
-
-debugfs=`find_debugfs`
-tracedir="$debugfs/tracing"
+DIR=`dirname $0`
+. $DIR/functions
 tmpfile="/tmp/tmp.$$"
 
-if [ ! -d $tracedir/instances ]; then
+if [ ! -d $TRACING_DIR/instances ]; then
     echo "instances not configured in this kernel"
     exit 0
 fi
 
-cd $tracedir/instances || exit -1
+cd $TRACING_DIR/instances || exit -1
 
 # clear out instances
 ls | while read t; do
@@ -166,14 +148,14 @@ if [ $# -gt 0 ]; then
 	arg="$@"
 fi
 
-for tracer in `cat $tracedir/available_tracers`; do
+for tracer in `cat $TRACING_DIR/available_tracers`; do
 	if [ $tracer == "nop" ]; then
 		continue;
 	fi
 	echo "Testing tracer $tracer"
-	echo $tracer > $tracedir/current_tracer
+	echo $tracer > $TRACING_DIR/current_tracer
 	echo "running $arg"
 	$arg
-	cat $tracedir/trace
-	echo nop > $tracedir/current_tracer
+	cat $TRACING_DIR/trace
+	echo nop > $TRACING_DIR/current_tracer
 done

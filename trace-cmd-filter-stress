@@ -131,7 +131,7 @@ read_pids() {
 
 get_tracing_dir() {
 	debug=`grep debugfs /proc/mounts | awk '{ print $2 }'`
-	echo -n "$debug/tracing"
+	echo -n "$TRACING_DIR"
 }
 
 ors() {

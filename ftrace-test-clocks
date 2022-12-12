@@ -1,7 +1,12 @@
-current=`cut -d'[' -f2 /sys/kernel/tracing/trace_clock | cut -d']' -f1`
-for clock in `cat /sys/kernel/tracing/trace_clock | sed -e 's/[][]//g'`; do
+DIR=`dirname $0`
+. $DIR/functions
+
+TRACE_CLOCK="$TRACING_DIR/trace_clock"
+
+current=`cut -d'[' -f2 $TRACE_CLOCK | cut -d']' -f1`
+for clock in `cat $TRACE_CLOCK | sed -e 's/[][]//g'`; do
 	echo "  TESTING $clock"
-	echo $clock > /sys/kernel/tracing/trace_clock
-	./ftrace-test-tracers sleep 1 || exit 1
+	echo $clock > $TRACE_CLOCK
+	$DIR/ftrace-test-tracers sleep 1 || exit 1
 done
 exit 0

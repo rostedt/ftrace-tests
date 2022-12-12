@@ -1,36 +1,19 @@
 #!/bin/bash
 
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
-	    echo $dir;
-	    break
-	fi
-    done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
-	    exit -1
-	fi
-	echo "/sys/kernel/debug"
-    else
-	echo $debugfs
-    fi
-}
+DIR=`dirname $0`
+. $DIR/functions
 
-debugfs=`find_debugfs`
-TRACEDIR="$debugfs/tracing"
-EVENTDIR=$TRACEDIR/events
+EVENTDIR=$TRACING_DIR/events
 
 function cnt_trace() {
-	    grep -v '^#' $TRACEDIR/trace | head -10000 | wc -l
+	    grep -v '^#' $TRACING_DIR/trace | head -10000 | wc -l
 }
 
 #set -x
 
 echo '** DISABLE TRACING'
-echo 0 > $TRACEDIR/tracing_on || exit -1
-echo > $TRACEDIR/trace || exit -1
+echo 0 > $TRACING_DIR/tracing_on || exit -1
+echo > $TRACING_DIR/trace || exit -1
 
 cnt=`cnt_trace`
 if [ $cnt -ne 0 ]; then
@@ -43,7 +26,7 @@ echo '** ENABLE EVENTS'
 echo 1 > $EVENTDIR/enable || exit -1
 
 echo '** ENABLE TRACING'
-echo 1 > $TRACEDIR/tracing_on || exit -1
+echo 1 > $TRACING_DIR/tracing_on || exit -1
 
 cnt=`cnt_trace`
 if [ $cnt -eq 0 ]; then
@@ -59,9 +42,9 @@ fi
 
 echo '** SET TRACEOFF'
 
-echo "$func:traceoff" > $TRACEDIR/set_ftrace_filter
+echo "$func:traceoff" > $TRACING_DIR/set_ftrace_filter
 
-cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+cnt=`grep schedule $TRACING_DIR/set_ftrace_filter | wc -l`
 if [ $cnt -ne 1 ]; then
    exit -1
 fi
@@ -74,41 +57,41 @@ if [ $cnt -ne $cnt2 ]; then
    exit -1;
 fi
 
-on=`cat $TRACEDIR/tracing_on`
+on=`cat $TRACING_DIR/tracing_on`
 if [ $on != "0" ]; then
 	exit -1
 fi
 
-line1=`cat $TRACEDIR/trace | tail -1`
+line1=`cat $TRACING_DIR/trace | tail -1`
 sleep 1
-line2=`cat $TRACEDIR/trace | tail -1`
+line2=`cat $TRACING_DIR/trace | tail -1`
 
 if [ "$line1" != "$line2" ]; then
    exit -1
 fi
 
-echo > $TRACEDIR/trace || exit -1
+echo > $TRACING_DIR/trace || exit -1
 
 cnt=`cnt_trace`
 if [ $cnt -ne 0 ]; then
    exit -1
 fi
 
-echo "!$func:traceoff" >> $TRACEDIR/set_ftrace_filter
+echo "!$func:traceoff" >> $TRACING_DIR/set_ftrace_filter
 
-cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+cnt=`grep schedule $TRACING_DIR/set_ftrace_filter | wc -l`
 if [ $cnt -ne 0 ]; then
    exit -1
 fi
 
-on=`cat $TRACEDIR/tracing_on`
+on=`cat $TRACING_DIR/tracing_on`
 if [ $on != "0" ]; then
 	exit -1
 fi
 
-echo "$func:traceon" > $TRACEDIR/set_ftrace_filter
+echo "$func:traceon" > $TRACING_DIR/set_ftrace_filter
 
-cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+cnt=`grep schedule $TRACING_DIR/set_ftrace_filter | wc -l`
 if [ $cnt -ne 1 ]; then
    exit -1
 fi
@@ -118,15 +101,15 @@ if [ $cnt -eq 0 ]; then
    exit -1
 fi
 
-on=`cat $TRACEDIR/tracing_on`
+on=`cat $TRACING_DIR/tracing_on`
 if [ $on != "1" ]; then
 	exit -1
 fi
 
 
-echo "!$func:traceon" >> $TRACEDIR/set_ftrace_filter
+echo "!$func:traceon" >> $TRACING_DIR/set_ftrace_filter
 
-cnt=`grep schedule $TRACEDIR/set_ftrace_filter | wc -l`
+cnt=`grep schedule $TRACING_DIR/set_ftrace_filter | wc -l`
 if [ $cnt -ne 0 ]; then
    exit -1
 fi
@@ -134,25 +117,25 @@ fi
 check_sleep() {
     val=$1
     sleep 1
-    cat $TRACEDIR/set_ftrace_filter
-    on=`cat $TRACEDIR/tracing_on`
+    cat $TRACING_DIR/set_ftrace_filter
+    on=`cat $TRACING_DIR/tracing_on`
     if [ $on != "$val" ]; then
 	exit -1
     fi
 }
 
 
-echo "$func:traceoff:3" > $TRACEDIR/set_ftrace_filter
+echo "$func:traceoff:3" > $TRACING_DIR/set_ftrace_filter
 check_sleep "0"
-echo 1 > $TRACEDIR/tracing_on
+echo 1 > $TRACING_DIR/tracing_on
 check_sleep "0"
-echo 1 > $TRACEDIR/tracing_on
+echo 1 > $TRACING_DIR/tracing_on
 check_sleep "0"
-echo 1 > $TRACEDIR/tracing_on
+echo 1 > $TRACING_DIR/tracing_on
 check_sleep "1"
-echo "!$func:traceoff:0" > $TRACEDIR/set_ftrace_filter
+echo "!$func:traceoff:0" > $TRACING_DIR/set_ftrace_filter
 
-if grep -e traceon -e traceoff $TRACEDIR/set_ftrace_filter; then
+if grep -e traceon -e traceoff $TRACING_DIR/set_ftrace_filter; then
     exit -1
 fi
 
