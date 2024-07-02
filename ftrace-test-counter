@@ -4,7 +4,7 @@
 
 find_debugfs() {
     debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $mount == "debugfs" ]; then
+	if [ $type == "debugfs" ]; then
 	    echo $dir;
 	    break
 	fi
