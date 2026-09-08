@@ -45,6 +45,10 @@ for mod in $modules; do
 		break
 	fi
 done
+if [ -z "$mod" ]; then
+	echo "No module found"
+	exit 1
+fi
 echo "Using module: $mod  Function: $func"
 module=$mod
 # module=uinput
