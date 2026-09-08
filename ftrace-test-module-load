@@ -1,20 +1,20 @@
 #!/bin/bash
 
-find_debugfs() {
-    debugfs=`cat /proc/mounts | while read mount dir type opts a b; do
-	if [ $type == "debugfs" ]; then
+find_tracefs() {
+    tracefs=`cat /proc/mounts | while read mount dir type opts a b; do
+	if [ $type == "tracefs" ]; then
 	    echo $dir;
 	    break
 	fi
     done`
-    if [ -z "$debugfs" ]; then
-	if ! mount -t debugfs nodev /sys/kernel/debug; then
-	    echo "FAILED to mount debugfs"
+    if [ -z "$tracefs" ]; then
+	if ! mount -t tracefs tracefs /sys/kernel/tracing; then
+	    echo "FAILED to mount tracefs"
 	    exit -1
 	fi
-	echo "/sys/kernel/debug"
+	echo "/sys/kernel/tracing"
     else
-	echo $debugfs
+	echo $tracefs
     fi
 }
 if [ ! -f /proc/modules ]; then
@@ -23,9 +23,7 @@ if [ ! -f /proc/modules ]; then
 fi
 
 set -x
-debug=`find_debugfs`
-
-tracing=$debug/tracing
+tracing=`find_tracefs`
 version=`uname -r`
 modules=`find /lib/modules/$version -name '*.ko' | sed -e 's,^.*/\([^/]*\)\.ko,\1,' -e 's/-/_/g'`
 loaded=`lsmod | cut -d' ' -f1`
